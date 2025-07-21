@@ -4,15 +4,27 @@ import pandas as pd
 import re
 import datetime
 import io
-import time # Para pausas em caso de erro 429 da API
+import time # Para pausas em caso de erro 429 da API e controle de rate limit
 import os   # Para verificar a existência do arquivo de logo
+from zoneinfo import ZoneInfo # Para fuso horário de Brasília
+
+# --- Constantes da Aplicação ---
+# Define o fuso horário de Brasília para a estimativa de tempo
+BRASILIA_TZ = ZoneInfo("America/Sao_Paulo") 
+# Limite de requisições por chave para respeitar APIs públicas (4 segundos por chave)
+RATE_LIMIT_SECONDS = 4 
+# URL da API de consulta CNPJ (open.cnpja.com para regime tributário)
+API_CNPJA_URL = "https://open.cnpja.com/office/" 
 
 # --- Configuração da Página ---
-st.set_page_config(page_title="Dados NF-55", layout="wide") # Layout 'wide' para melhor visualização da tabela
+st.set_page_config(
+    page_title="Dados NF-e - Adapta",
+    layout="wide", # Layout 'wide' para melhor visualização da tabela
+    initial_sidebar_state="collapsed"
+)
 
 # --- Adicionar o Logo ---
 # Caminho para o logo. Por padrão, o Streamlit busca caminhos relativos ao diretório do script.
-# Se 'images_2' está na raiz do seu projeto Streamlit, este caminho está correto.
 logo_path = "images_2/logo.png" 
 
 if os.path.exists(logo_path):
@@ -20,82 +32,83 @@ if os.path.exists(logo_path):
 else:
     st.warning(f"O arquivo de logo não foi encontrado em '{logo_path}'. Verifique o caminho.")
 
-# --- Custom CSS para o Tema (Copiado do seu app CNPJ para consistência) ---
-st.markdown("""
+# --- Estilo CSS Personalizado (Adaptado do seu app de Lote) ---
+st.markdown(f"""
 <style>
-/* Fundo geral do app e cor do texto padrão para tema claro */
-.stApp {
-    background-color: #F8F9FA; /* Cinza muito claro, quase branco */
-    color: #333333; /* Cinza escuro para texto padrão */
-}
+    /* Cor de Fundo Principal da Aplicação - Muito Escuro / Quase Preto */
+    .stApp {{
+        background-color: #1A1A1A; /* Quase preto */
+        color: #EEEEEE; /* Cinza claro para o texto principal */
+    }}
 
-/* Títulos (h1, h2, h3, h5) */
-h1, h2, h3, h5 {
-    color: #00ACC1; /* Azul Ciano para todos os títulos relevantes */
-}
+    /* Títulos (h1 a h6) */
+    h1, h2, h3, h4, h5, h6 {{
+        color: #FFC300; /* Amarelo Riqueza */
+    }}
 
-/* Fundo dos campos de entrada de texto (textarea, text_input) */
-.st-emotion-cache-z5fcl4, /* Container primário do input */
-.st-emotion-cache-1oe5f0g, /* Caixa de texto do input */
-.st-emotion-cache-13vmq3j, /* Outra classe comum de input */
-.st-emotion-cache-1g0b27k, /* Outra classe comum de input */
-.st-emotion-cache-f0f7f3 /* Classe de textarea */
-{
-    background-color: white; /* Fundo branco para campos de entrada */
-    color: #333333; /* Cor escura para o texto digitado */
-    border-radius: 5px;
-    border: 1px solid #ced4da; /* Borda cinza clara */
-}
+    /* Estilo dos Labels e Inputs de Texto */
+    .stTextInput label, .stTextArea label {{
+        color: #FFC300; /* Amarelo Riqueza para os labels */
+    }}
+    .stTextInput div[data-baseweb="input"] > div, .stTextArea div[data-baseweb="textarea"] > textarea {{
+        background-color: #333333; /* Cinza escuro para o fundo do input */
+        color: #EEEEEE; /* Cinza claro para o texto digitado */
+        border: 1px solid #FFC300; /* Borda Amarelo Riqueza */
+    }}
+    /* Estilo do input/textarea quando focado */
+    .stTextInput div[data-baseweb="input"] > div:focus-within, .stTextArea div[data-baseweb="textarea"] > textarea:focus-within {{
+        border-color: #FFD700; /* Amarelo ligeiramente mais claro no foco */
+        box-shadow: 0 0 0 0.1rem rgba(255, 195, 0, 0.25); /* Sombra sutil */
+    }}
 
-/* Caixa de informação (st.info) */
-div[data-testid="stAlert"] {
-    background-color: #e0f7fa; /* Fundo ciano claro */
-    color: #004d40; /* Texto verde-azulado escuro para bom contraste */
-    border-left: 5px solid #00ACC1; /* Borda ciano para destaque */
-    border-radius: 5px;
-}
+    /* Estilo dos Botões */
+    .stButton > button {{
+        background-color: #FFC300; /* Amarelo Riqueza */
+        color: #1A1A1A; /* Texto escuro no botão amarelo */
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        font-weight: bold;
+        transition: background-color 0.3s ease; /* Transição suave no hover */
+    }}
+    /* Estilo do botão ao passar o mouse */
+    .stButton > button:hover {{
+        background-color: #FFD700; /* Amarelo ligeiramente mais claro no hover */
+        color: #000000; /* Preto total no texto para contraste */
+    }}
 
-/* Estilo dos Botões */
-.stButton>button {
-    background-color: #00ACC1; /* Fundo ciano */
-    color: white; /* Texto branco para contraste */
-    border-radius: 5px;
-    border: none;
-    padding: 10px 20px;
-    font-size: 16px;
-    cursor: pointer;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2); /* Sombra sutil para profundidade */
-    transition: background-color 0.3s ease; /* Transição suave no hover */
-}
-.stButton>button:hover {
-    background-color: #008C9E; /* Ciano ligeiramente mais escuro no hover */
-}
+    /* Estilo dos Expanders (não usado aqui, mas mantido para consistência se adicionar) */
+    .stExpander {{
+        background-color: #333333; /* Cinza escuro para o fundo do expander */
+        border: 1px solid #FFC300; /* Borda Amarelo Riqueza */
+        border-radius: 5px;
+        padding: 10px;
+        margin-bottom: 10px;
+    }}
+    .stExpander > div > div > div > p {{
+        color: #EEEEEE; /* Cinza claro para o título do expander */
+    }}
 
-/* Estilo das Tabs (não usado neste app, mas mantido para consistência) */
-div[data-testid="stTabs"] {
-    background-color: #F0F2F6;
-    border-radius: 5px;
-    border-bottom: 1px solid #ced4da;
-}
+    /* Estilo para st.info, st.warning, st.error */
+    .stAlert {{
+        background-color: #333333; /* Cinza escuro para o fundo dos alertas */
+        color: #EEEEEE; /* Cinza claro para o texto */
+        border-left: 5px solid #FFC300; /* Borda esquerda Amarelo Riqueza */
+        border-radius: 5px;
+    }}
+    .stAlert > div > div > div > div > span {{
+        color: #EEEEEE !important; /* Garante que o texto dentro do alerta seja claro */
+    }}
+    .stAlert > div > div > div > div > svg {{
+        color: #FFC300 !important; /* Garante que o ícone do alerta seja amarelo */
+    }}
 
-button[data-testid^="stTab"] {
-    color: #555555;
-    background-color: #F0F2F6;
-    font-weight: bold;
-    padding: 10px 15px;
-    border-radius: 5px 5px 0 0;
-    margin-right: 2px;
-    transition: background-color 0.3s ease, color 0.3s ease, border-bottom 0.3s ease;
-}
-
-button[data-testid^="stTab"][aria-selected="true"] {
-    color: #00ACC1;
-    background-color: white;
-    border-bottom: 3px solid #00ACC1;
-}
+    /* Linhas divisórias */
+    hr {{
+        border-top: 1px solid #444444; /* Cinza para divisórias */
+    }}
 </style>
 """, unsafe_allow_html=True)
-
 
 st.title("📄 Dados Detalhados de NF-e (Chave de Acesso)")
 st.markdown("Cole as chaves de acesso das NF-e para analisar sua composição e o regime tributário do emitente.")
@@ -132,10 +145,10 @@ def get_cnpj_tax_regime(cnpj):
     if not clean_cnpj_num.isdigit() or len(clean_cnpj_num) != 14:
         return "CNPJ Inválido"
 
-    url = f"https://open.cnpja.com/office/{clean_cnpj_num}"
+    url = f"{API_CNPJA_URL}{clean_cnpj_num}"
     try:
         # Adiciona um timeout para evitar que a requisição trave indefinidamente
-        response = requests.get(url, timeout=10) 
+        response = requests.get(url, timeout=15) 
 
         if response.status_code == 200:
             data = response.json()
@@ -154,7 +167,7 @@ def get_cnpj_tax_regime(cnpj):
             else:
                 return "Regime Normal / Outros"
         elif response.status_code == 429:
-            st.warning(f"Muitas requisições para CNPJ {clean_cnpj_num} (Código 429). Tentando novamente em 5 segundos...")
+            # st.warning(f"Muitas requisições para CNPJ {clean_cnpj_num} (Código 429). Tentando novamente em 5 segundos...")
             time.sleep(5) # Pausa por 5 segundos antes de tentar novamente
             return get_cnpj_tax_regime(cnpj) # Tenta novamente (retry simples)
         elif response.status_code == 404:
@@ -193,13 +206,53 @@ if st.button("Processar Chaves de Acesso"):
             st.session_state.nfe_results_df = pd.DataFrame()
         else:
             results = []
-            # Barra de progresso para feedback visual
-            progress_bar = st.progress(0, text="Processando chaves de acesso...")
+            total_keys = len(cleaned_keys)
+            start_time = time.time()
+
+            # Placeholders para as mensagens de status e progresso
+            progress_bar = st.progress(0, text="Iniciando processamento...")
+            time_estimate_text = st.empty()
+            current_request_text = st.empty()
             
+            st.info(f"""
+                **Atenção:** Será feita 1 requisição a cada **{RATE_LIMIT_SECONDS:.0f} segundos** para respeitar os limites de requisição de APIs públicas.
+                Para a sua consulta de lote de **{total_keys} chaves**, o tempo estimado de processamento será de
+                **{str(datetime.timedelta(seconds=total_keys * RATE_LIMIT_SECONDS))}**.
+                Durante o processamento, é importante manter a página ativa no navegador para evitar interrupções.
+                """, icon="ℹ️")
+
             for i, key in enumerate(cleaned_keys):
+                # Controle de Rate Limit (pausa antes da próxima requisição)
+                if i > 0: # Não pausa antes da primeira requisição
+                    elapsed_for_this_loop = time.time() - (start_time + i * RATE_LIMIT_SECONDS)
+                    time_to_wait = RATE_LIMIT_SECONDS - elapsed_for_this_loop
+                    if time_to_wait > 0:
+                        time.sleep(time_to_wait)
+
                 # Atualiza a barra de progresso
-                progress_bar.progress((i + 1) / len(cleaned_keys), text=f"Processando chave {i+1} de {len(cleaned_keys)}...")
+                progress = (i + 1) / total_keys
+                progress_bar.progress(progress, text=f"Processando chave {i+1} de {total_keys}...")
                 
+                # Estimativa de tempo
+                elapsed_time = time.time() - start_time
+                remaining_keys = total_keys - (i + 1)
+                
+                # Ajusta o tempo por requisição com base no que já passou
+                time_per_future_request = max(RATE_LIMIT_SECONDS, elapsed_time / (i + 1) if (i + 1) > 0 else RATE_LIMIT_SECONDS)
+                
+                estimated_remaining_seconds = remaining_keys * time_per_future_request
+                
+                current_brasilia_time = datetime.datetime.now(BRASILIA_TZ)
+                estimated_finish_time = current_brasilia_time + datetime.timedelta(seconds=estimated_remaining_seconds)
+                
+                time_estimate_text.info(
+                    f"Progresso: **{int(progress*100)}%**\n\n"
+                    f"Chaves restantes: **{remaining_keys}**\n\n"
+                    f"Tempo estimado para conclusão: **{str(datetime.timedelta(seconds=estimated_remaining_seconds)).split('.')[0]}**\n\n"
+                    f"Conclusão esperada por volta de: **{estimated_finish_time.strftime('%H:%M:%S de %d/%m/%Y')}**"
+                )
+                current_request_text.text(f"Consultando CNPJ para chave: {key} ({i + 1}/{total_keys})")
+
                 # Validação básica da chave
                 if len(key) != 44 or not key.isdigit():
                     results.append({
@@ -228,7 +281,10 @@ if st.button("Processar Chaves de Acesso"):
                 
                 results.append(parsed_data)
             
-            progress_bar.empty() # Remove a barra de progresso ao finalizar
+            # Limpa os elementos de status após a conclusão
+            progress_bar.empty() 
+            time_estimate_text.empty()
+            current_request_text.empty()
             
             if results:
                 df = pd.DataFrame(results)
