@@ -10,11 +10,34 @@ from zoneinfo import ZoneInfo # Para fuso horário de Brasília
 
 # --- Constantes da Aplicação ---
 # Define o fuso horário de Brasília para a estimativa de tempo
-BRASILIA_TZ = ZoneInfo("America/Sao_Paulo") 
+BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
 # Limite de requisições por chave para respeitar APIs públicas (4 segundos por chave)
-RATE_LIMIT_SECONDS = 4 
+RATE_LIMIT_SECONDS = 4
 # URL da API de consulta CNPJ (open.cnpja.com para regime tributário)
-API_CNPJA_URL = "https://open.cnpja.com/office/" 
+API_CNPJA_URL = "https://open.cnpja.com/office/"
+
+# --- Mapeamentos para Chave de Acesso ---
+# Dicionário com os códigos de UF e seus respectivos nomes/abreviações
+UF_CODES = {
+    "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP", "17": "TO",
+    "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL", "28": "SE", "29": "BA",
+    "31": "MG", "32": "ES", "33": "RJ", "35": "SP",
+    "41": "PR", "42": "SC", "43": "RS",
+    "50": "MS", "51": "MT", "52": "GO", "53": "DF"
+}
+
+# Dicionário com os tipos de emissão de NF-e
+EMISSION_TYPES = {
+    "1": "Normal (Saída)",
+    "2": "Contingência FS-IA",
+    "3": "Contingência SCAN",
+    "4": "Contingência DPEC",
+    "5": "Contingência FS-DA",
+    "6": "Contingência SVC-AN",
+    "7": "Contingência SVC-RS",
+    # Embora mais comum em NFC-e, incluído para completude se aplicável
+    "9": "Contingência Off-line NFC-e"
+}
 
 # --- Configuração da Página ---
 st.set_page_config(
@@ -25,7 +48,7 @@ st.set_page_config(
 
 # --- Adicionar o Logo ---
 # Caminho para o logo. Por padrão, o Streamlit busca caminhos relativos ao diretório do script.
-logo_path = "images_2/logo.png" 
+logo_path = "images_2/logo.png"
 
 if os.path.exists(logo_path):
     st.image(logo_path, width=400) # Ajuste a largura conforme necessário
@@ -117,20 +140,56 @@ st.markdown("Cole as chaves de acesso das NF-e para analisar sua composição e 
 
 def parse_nfe_key(key):
     """
-    Analisa uma chave de acesso de NF-e de 44 dígitos em seus componentes.
+    Analisa uma chave de acesso de NF-e de 44 dígitos em seus componentes,
+    incluindo a formatação e mapeamento de campos.
     Assume que a chave já foi validada como tendo 44 dígitos e sendo numérica.
     """
+    # Extração dos dados brutos
+    uf_code = key[0:2]
+    year_month_raw = key[2:6]
+    cnpj_emitente = key[6:20]
+    modelo_doc = key[20:22]
+    serie_raw = key[22:25]
+    numero_nfe_raw = key[25:34]
+    tipo_emissao_code = key[34:35]
+    codigo_numerico = key[35:43]
+    digito_verificador = key[43:44]
+
+    # Formatação e Mapeamento
+    uf_formatted = f"{uf_code} - {UF_CODES.get(uf_code, 'UF Desconhecida')}"
+
+    # Ano/Mês Emissão (YYMM para MM/YYYY)
+    try:
+        # Assume que o ano '25' se refere a '2025' e assim por diante.
+        # Pode ser ajustado para '19XX' se o período for anterior a 2000.
+        year_full = f"20{year_month_raw[0:2]}"
+        month_str = year_month_raw[2:4]
+        # Validação básica para o mês
+        if 1 <= int(month_str) <= 12:
+            ano_mes_emissao_formatted = f"{month_str}/{year_full}"
+        else:
+            ano_mes_emissao_formatted = "Formato Inválido (Mês)"
+    except ValueError:
+        ano_mes_emissao_formatted = "Formato Inválido (Ano/Mês)"
+
+    tipo_emissao_formatted = f"{tipo_emissao_code} - {EMISSION_TYPES.get(tipo_emissao_code, 'Tipo Desconhecido')}"
+
+    # Formata CNPJ com máscara para melhor leitura
+    cnpj_formatted = f"{cnpj_emitente[:2]}.{cnpj_emitente[2:5]}.{cnpj_emitente[5:8]}/{cnpj_emitente[8:12]}-{cnpj_emitente[12:]}"
+
+    # Retorna os dados formatados
     return {
-        "UF": key[0:2],
-        "Ano/Mês Emissão": key[2:6],
-        "CNPJ Emitente": key[6:20],
-        "Modelo Doc.": key[20:22],
-        "Série": key[22:25],
-        "Número NF-e": key[25:34],
-        "Tipo Emissão": key[34:35],
-        "Código Numérico": key[35:43],
-        "Dígito Verificador": key[43:44]
+        "UF": uf_formatted,
+        "Ano/Mês Emissão": ano_mes_emissao_formatted,
+        "CNPJ Emitente": cnpj_formatted,
+        "Modelo Doc.": modelo_doc,
+        "Série": serie_raw,
+        "Número NF-e": numero_nfe_raw,
+        "Tipo Emissão": tipo_emissao_formatted,
+        "Código Numérico": codigo_numerico,
+        "Dígito Verificador": digito_verificador
     }
+
 
 def clean_cnpj(cnpj_text):
     """Remove caracteres não numéricos do CNPJ."""
@@ -148,7 +207,7 @@ def get_cnpj_tax_regime(cnpj):
     url = f"{API_CNPJA_URL}{clean_cnpj_num}"
     try:
         # Adiciona um timeout para evitar que a requisição trave indefinidamente
-        response = requests.get(url, timeout=15) 
+        response = requests.get(url, timeout=15)
 
         if response.status_code == 200:
             data = response.json()
@@ -192,7 +251,7 @@ st.text_area(
 
 if st.button("Processar Chaves de Acesso"):
     keys_input = st.session_state.nfe_keys_input.strip()
-    
+
     if not keys_input:
         st.warning("Por favor, cole as chaves de acesso antes de processar.")
         st.session_state.nfe_results_df = pd.DataFrame() # Limpa resultados anteriores
@@ -200,7 +259,7 @@ if st.button("Processar Chaves de Acesso"):
         raw_keys = keys_input.split('\n')
         # Filtra linhas vazias e remove espaços em branco
         cleaned_keys = [k.strip() for k in raw_keys if k.strip()]
-        
+
         if len(cleaned_keys) > 400:
             st.error(f"Você colou {len(cleaned_keys)} chaves, mas o limite é de 400. Por favor, reduza a quantidade.")
             st.session_state.nfe_results_df = pd.DataFrame()
@@ -213,7 +272,7 @@ if st.button("Processar Chaves de Acesso"):
             progress_bar = st.progress(0, text="Iniciando processamento...")
             time_estimate_text = st.empty()
             current_request_text = st.empty()
-            
+
             st.info(f"""
                 **Atenção:** Será feita 1 requisição a cada **{RATE_LIMIT_SECONDS:.0f} segundos** para respeitar os limites de requisição de APIs públicas.
                 Para a sua consulta de lote de **{total_keys} chaves**, o tempo estimado de processamento será de
@@ -223,28 +282,32 @@ if st.button("Processar Chaves de Acesso"):
 
             for i, key in enumerate(cleaned_keys):
                 # Controle de Rate Limit (pausa antes da próxima requisição)
-                if i > 0: # Não pausa antes da primeira requisição
-                    elapsed_for_this_loop = time.time() - (start_time + i * RATE_LIMIT_SECONDS)
-                    time_to_wait = RATE_LIMIT_SECONDS - elapsed_for_this_loop
+                # Pausamos no início de cada iteração, exceto a primeira, para garantir o rate limit
+                if i > 0:
+                    time_passed_since_start = time.time() - start_time
+                    expected_time_for_this_iteration = i * RATE_LIMIT_SECONDS
+                    time_to_wait = expected_time_for_this_iteration - time_passed_since_start
                     if time_to_wait > 0:
                         time.sleep(time_to_wait)
+
 
                 # Atualiza a barra de progresso
                 progress = (i + 1) / total_keys
                 progress_bar.progress(progress, text=f"Processando chave {i+1} de {total_keys}...")
-                
+
                 # Estimativa de tempo
                 elapsed_time = time.time() - start_time
                 remaining_keys = total_keys - (i + 1)
-                
+
                 # Ajusta o tempo por requisição com base no que já passou
+                # Usamos max para garantir que o tempo por requisição não caia abaixo de RATE_LIMIT_SECONDS
                 time_per_future_request = max(RATE_LIMIT_SECONDS, elapsed_time / (i + 1) if (i + 1) > 0 else RATE_LIMIT_SECONDS)
-                
+
                 estimated_remaining_seconds = remaining_keys * time_per_future_request
-                
+
                 current_brasilia_time = datetime.datetime.now(BRASILIA_TZ)
                 estimated_finish_time = current_brasilia_time + datetime.timedelta(seconds=estimated_remaining_seconds)
-                
+
                 time_estimate_text.info(
                     f"Progresso: **{int(progress*100)}%**\n\n"
                     f"Chaves restantes: **{remaining_keys}**\n\n"
@@ -269,23 +332,24 @@ if st.button("Processar Chaves de Acesso"):
                         "Regime Tributário": "Chave Inválida"
                     })
                     continue # Pula para a próxima chave
-                
+
                 parsed_data = parse_nfe_key(key)
-                cnpj_to_query = parsed_data["CNPJ Emitente"]
-                
+                # O CNPJ para a consulta à API precisa ser o CNPJ bruto, sem máscara
+                cnpj_to_query = re.sub(r'\D', '', parsed_data["CNPJ Emitente"]) # Remove máscara para a API
+
                 tax_regime = get_cnpj_tax_regime(cnpj_to_query)
-                
+
                 # Adiciona a chave original e o regime tributário aos dados parseados
                 parsed_data["Chave de Acesso"] = key
                 parsed_data["Regime Tributário"] = tax_regime
-                
+
                 results.append(parsed_data)
-            
+
             # Limpa os elementos de status após a conclusão
-            progress_bar.empty() 
+            progress_bar.empty()
             time_estimate_text.empty()
             current_request_text.empty()
-            
+
             if results:
                 df = pd.DataFrame(results)
                 # Reorganiza as colunas na ordem desejada
@@ -297,10 +361,10 @@ if st.button("Processar Chaves de Acesso"):
                 # Garante que todas as colunas existem antes de reordenar
                 for col in column_order:
                     if col not in df.columns:
-                        df[col] = 'N/A' 
-                
+                        df[col] = 'N/A'
+
                 df = df[column_order]
-                
+
                 st.session_state.nfe_results_df = df
                 st.success("Processamento concluído!")
             else:
@@ -312,7 +376,7 @@ if "nfe_results_df" in st.session_state and not st.session_state.nfe_results_df.
     st.subheader("Resultados da Análise")
     # Exibe o DataFrame de forma interativa
     st.dataframe(st.session_state.nfe_results_df, hide_index=True, use_container_width=True)
-    
+
     st.markdown("---")
     st.subheader("Opções de Exportação")
 
@@ -332,11 +396,11 @@ if "nfe_results_df" in st.session_state and not st.session_state.nfe_results_df.
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="download_excel_nfe"
         )
-    
+
     with col2:
         # Botão de Download para CSV
         csv_output = st.session_state.nfe_results_df.to_csv(index=False, encoding='utf-8-sig') # 'utf-8-sig' para compatibilidade com acentuação no Excel
-        
+
         st.download_button(
             label="📄 Baixar como CSV",
             data=csv_output,
