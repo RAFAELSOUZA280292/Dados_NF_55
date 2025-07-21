@@ -142,7 +142,6 @@ def parse_nfe_key(key):
     """
     Analisa uma chave de acesso de NF-e de 44 dígitos em seus componentes,
     incluindo a formatação e mapeamento de campos.
-    Assume que a chave já foi validada como tendo 44 dígitos e sendo numérica.
     """
     # Extração dos dados brutos
     uf_code = key[0:2]
@@ -152,8 +151,8 @@ def parse_nfe_key(key):
     serie_raw = key[22:25]
     numero_nfe_raw = key[25:34]
     tipo_emissao_code = key[34:35]
-    codigo_numerico = key[35:43]
-    digito_verificador = key[43:44]
+    # codigo_numerico = key[35:43] # Removido
+    # digito_verificador = key[43:44] # Removido
 
     # Formatação e Mapeamento
     uf_formatted = f"{uf_code} - {UF_CODES.get(uf_code, 'UF Desconhecida')}"
@@ -177,7 +176,7 @@ def parse_nfe_key(key):
     # Formata CNPJ com máscara para melhor leitura
     cnpj_formatted = f"{cnpj_emitente[:2]}.{cnpj_emitente[2:5]}.{cnpj_emitente[5:8]}/{cnpj_emitente[8:12]}-{cnpj_emitente[12:]}"
 
-    # Retorna os dados formatados
+    # Retorna os dados formatados (Código Numérico e Dígito Verificador removidos)
     return {
         "UF": uf_formatted,
         "Ano/Mês Emissão": ano_mes_emissao_formatted,
@@ -185,9 +184,7 @@ def parse_nfe_key(key):
         "Modelo Doc.": modelo_doc,
         "Série": serie_raw,
         "Número NF-e": numero_nfe_raw,
-        "Tipo Emissão": tipo_emissao_formatted,
-        "Código Numérico": codigo_numerico,
-        "Dígito Verificador": digito_verificador
+        "Tipo Emissão": tipo_emissao_formatted
     }
 
 
@@ -318,6 +315,7 @@ if st.button("Processar Chaves de Acesso"):
 
                 # Validação básica da chave
                 if len(key) != 44 or not key.isdigit():
+                    # Ajustado para remover as colunas não desejadas também para chaves inválidas
                     results.append({
                         "Chave de Acesso": key,
                         "UF": "Chave Inválida",
@@ -327,15 +325,14 @@ if st.button("Processar Chaves de Acesso"):
                         "Série": "Chave Inválida",
                         "Número NF-e": "Chave Inválida",
                         "Tipo Emissão": "Chave Inválida",
-                        "Código Numérico": "Chave Inválida",
-                        "Dígito Verificador": "Chave Inválida",
                         "Regime Tributário": "Chave Inválida"
                     })
                     continue # Pula para a próxima chave
 
                 parsed_data = parse_nfe_key(key)
                 # O CNPJ para a consulta à API precisa ser o CNPJ bruto, sem máscara
-                cnpj_to_query = re.sub(r'\D', '', parsed_data["CNPJ Emitente"]) # Remove máscara para a API
+                # parse_nfe_key já retorna o CNPJ formatado, então precisamos desformatar para a API
+                cnpj_to_query = re.sub(r'\D', '', key[6:20]) # Extrai o CNPJ bruto diretamente da chave para a API
 
                 tax_regime = get_cnpj_tax_regime(cnpj_to_query)
 
@@ -352,11 +349,11 @@ if st.button("Processar Chaves de Acesso"):
 
             if results:
                 df = pd.DataFrame(results)
-                # Reorganiza as colunas na ordem desejada
+                # Reorganiza as colunas na ordem desejada (Código Numérico e Dígito Verificador removidos)
                 column_order = [
                     "Chave de Acesso", "UF", "Ano/Mês Emissão", "CNPJ Emitente",
                     "Modelo Doc.", "Série", "Número NF-e", "Tipo Emissão",
-                    "Código Numérico", "Dígito Verificador", "Regime Tributário"
+                    "Regime Tributário"
                 ]
                 # Garante que todas as colunas existem antes de reordenar
                 for col in column_order:
@@ -385,6 +382,7 @@ if "nfe_results_df" in st.session_state and not st.session_state.nfe_results_df.
     with col1:
         # Botão de Download para Excel
         excel_output = io.BytesIO()
+        # Aqui, o Streamlit procura por 'xlsxwriter' como o 'engine'
         with pd.ExcelWriter(excel_output, engine='xlsxwriter') as writer:
             st.session_state.nfe_results_df.to_excel(writer, index=False, sheet_name='Dados NFe')
         processed_excel_data = excel_output.getvalue()
@@ -402,7 +400,7 @@ if "nfe_results_df" in st.session_state and not st.session_state.nfe_results_df.
         csv_output = st.session_state.nfe_results_df.to_csv(index=False, encoding='utf-8-sig') # 'utf-8-sig' para compatibilidade com acentuação no Excel
 
         st.download_button(
-            label="📄 Baixar como CSV",
+            label="�� Baixar como CSV",
             data=csv_output,
             file_name=f"dados_nfe_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv",
